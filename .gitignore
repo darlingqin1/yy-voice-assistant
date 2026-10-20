@@ -1,0 +1,16 @@
+dist/
+build/
+work/
+*.exe
+*.pdb
+*.zip
+设置.json
+窗口诊断.json
+状态诊断.json
+随YY启动诊断.txt
+自定义音效/
+__pycache__/
+.更新/
+*.previous
+*.incoming
+更新结果.txt
