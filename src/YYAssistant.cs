@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Media;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text;
@@ -20,11 +19,11 @@ using System.Windows.Automation;
 using Forms = System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("YY Voice Assistant")]
-[assembly: System.Reflection.AssemblyVersion("0.1.3.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.1.3.0")]
+[assembly: System.Reflection.AssemblyVersion("0.1.4.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.1.4.0")]
 
-// YY 9.59/9.60 adapter. Only query/read access to YY; no injection, memory writes,
-// keyboard hooks or access to a game's process. Reject unknown binary hashes.
+// Read compatible YY layouts regardless of version or file hash. Query/read only;
+// validate loaded modules, object identities and data bounds before using state.
 internal sealed class Snapshot
 {
     public string Status = "等待 YY";
@@ -94,14 +93,6 @@ internal sealed class YYReader : IDisposable
     private List<uint> monitors = new List<uint>();
     private DateTime nextScan = DateTime.MinValue, nextConnect = DateTime.MinValue;
     private string reason = "等待 YY";
-    // 9.60 retains the verified QObject vtables and state/layout offsets.
-    // Keep an exact per-module allowlist; future builds still require verification.
-    private static readonly Dictionary<string,string[]> Hashes = new Dictionary<string,string[]>(StringComparer.OrdinalIgnoreCase) {
-        {"bizchannel.dll", new[]{"F252F7D78C863FD705124826791035FA02BA913F77F5481AF814C84AFCEF0098", "EB5264A8D765B3997D7588879468E64AF6569F3FF13224E1CD8F9C8D7DAE374B"}},
-        {"channellogic.dll", new[]{"E875AAD549804E803B2845268ACABA61D5C2E3455F688161A16D869318DF4C87", "E8013440039FC9B9E659404E5AF2C6ECE6B6A22DB1DA51DF3ECB0F5CF87F2B77"}},
-        {"yycefchannel.dll", new[]{"1B512BF86EC13BEEB2925D46C7E06EFBCF2CA99092835B452501F3D81C02E19B"}},
-        {"dwbase.dll", new[]{"504E925B7B7043031E59F8C4AB250AE3BEE6507B30AA2A9A8DEF56D44C953BCF", "4503E6EAB881671E3AD79361EB7B9A1CAF7F9311FCDFD79618A99104EAEFF03E"}}
-    };
     public byte[] Read(uint address, int count)
     {
         if (handle == IntPtr.Zero || address < 0x10000 || count < 0 || count > 1048580) return null;
@@ -109,12 +100,32 @@ internal sealed class YYReader : IDisposable
         return ReadProcessMemory(handle, new IntPtr((long)address), bytes, (UIntPtr)count, out got) && got.ToUInt64() == (ulong)count ? bytes : null;
     }
     private uint U32(uint address) { var b = Read(address,4); return b == null ? 0 : BitConverter.ToUInt32(b,0); }
-    private static bool Known(ModuleEntry module)
+    // Offsets describe the supported layout, not a product-version allowlist.
+    // Check the actual mapped module and executable targets; a rebuilt compatible
+    // DLL can be used immediately without recording its hash or version number.
+    private bool VtableReadable(ModuleEntry module,uint offset)
     {
-        string[] expected;
-        if (!Hashes.TryGetValue(module.Name,out expected)) return false;
-        using (var sha = SHA256.Create()) using(var f = File.OpenRead(module.Path))
-            return expected.Contains(BitConverter.ToString(sha.ComputeHash(f)).Replace("-",""));
+        ulong baseAddress=(ulong)module.BaseAddress.ToInt64();
+        if(baseAddress<0x10000 || baseAddress>UInt32.MaxValue) return false;
+        var dos=Read((uint)baseAddress,64);
+        if(dos==null || dos[0]!=0x4d || dos[1]!=0x5a) return false;
+        uint ntOffset=BitConverter.ToUInt32(dos,60);
+        if(ntOffset<64 || ntOffset>1048576 || baseAddress+ntOffset+84>UInt32.MaxValue) return false;
+        var nt=Read((uint)(baseAddress+ntOffset),84);
+        if(nt==null || BitConverter.ToUInt32(nt,0)!=0x4550 || BitConverter.ToUInt16(nt,4)!=0x14c || BitConverter.ToUInt16(nt,24)!=0x10b) return false;
+        uint size=BitConverter.ToUInt32(nt,80);
+        if(size<4096 || baseAddress+size>0x100000000UL || offset<4 || (ulong)offset+12>size) return false;
+        var table=Read((uint)(baseAddress+offset),12);
+        if(table==null) return false;
+        for(int i=0;i<12;i+=4) {
+            uint function=BitConverter.ToUInt32(table,i);
+            if(function<baseAddress || function>=baseAddress+size) return false;
+            Region region;
+            if(VirtualQueryEx(handle,new IntPtr((long)function),out region,(UIntPtr)Marshal.SizeOf(typeof(Region)))==UIntPtr.Zero) return false;
+            uint protection=region.Protect&255;
+            if(region.State!=0x1000 || (region.Protect&0x100)!=0 || (protection!=0x10 && protection!=0x20 && protection!=0x40 && protection!=0x80)) return false;
+        }
+        return true;
     }
     private bool Connect()
     {
@@ -127,16 +138,18 @@ internal sealed class YYReader : IDisposable
                 var biz = modules.FirstOrDefault(m => String.Equals(m.Name,"bizchannel.dll",StringComparison.OrdinalIgnoreCase));
                 var channel = modules.FirstOrDefault(m => String.Equals(m.Name,"channellogic.dll",StringComparison.OrdinalIgnoreCase));
                 if (biz == null || channel == null) { reason="等待 YY 语音模块就绪"; continue; }
-                if (!Known(biz) || !Known(channel)) { reason = "此 YY 版本需要适配"; continue; }
                 handle = OpenProcess(0x410,false,p.Id);
                 if (handle == IntPtr.Zero) { reason = "无法读取 YY 状态"; continue; }
+                if(!VtableReadable(biz,399680) || !VtableReadable(biz,363044) || !VtableReadable(channel,897408)) {
+                    Dispose(); reason="无法识别 YY 语音结构"; continue;
+                }
                 process = Process.GetProcessById(p.Id);
                 voiceVtable = checked((uint)biz.BaseAddress.ToInt64() + 399680);
                 proxyVtable = checked((uint)biz.BaseAddress.ToInt64() + 363044);
                 monitorVtable = checked((uint)channel.BaseAddress.ToInt64() + 897408);
                 var cef=modules.FirstOrDefault(m=>String.Equals(m.Name,"yycefchannel.dll",StringComparison.OrdinalIgnoreCase));
                 var dw=modules.FirstOrDefault(m=>String.Equals(m.Name,"dwbase.dll",StringComparison.OrdinalIgnoreCase));
-                if(cef!=null && dw!=null && Known(cef) && Known(dw)) {
+                if(cef!=null && dw!=null && VtableReadable(cef,2052296) && VtableReadable(cef,0x1f5184) && VtableReadable(dw,0x38a6c)) {
                     modelVtable=(uint)cef.BaseAddress.ToInt64()+2052296;
                     userVtable=(uint)cef.BaseAddress.ToInt64()+0x1f5184;
                     propertyVtable=(uint)dw.BaseAddress.ToInt64()+0x38a6c;
@@ -145,7 +158,7 @@ internal sealed class YYReader : IDisposable
                 return true;
             }
             if (processes.Length == 0) reason = "等待 YY 启动";
-        } catch { reason = "正在等待 YY 就绪"; }
+        } catch { Dispose(); reason = "正在等待 YY 就绪"; }
         finally { foreach (var p in processes) p.Dispose(); }
         return false;
     }
@@ -274,9 +287,9 @@ internal sealed class YYReader : IDisposable
                 voice=proxy=0;
                 if (DateTime.UtcNow>=nextScan) FindObjects();
             }
-            if (voice==0 || proxy==0) { s.Status="等待进入语音频道"; return s; }
-            var b=Read(proxy+0x44,1);
-            if (b==null || b[0]>1) { s.Status="YY 状态暂不可读"; return s; }
+            if (voice==0 || proxy==0) { s.Status="等待语音频道或兼容的 YY 状态"; return s; }
+            var b=Read(proxy+0x44,2);
+            if (b==null || b[0]>1 || b[1]>1) { s.Status="YY 状态暂不可读"; return s; }
             // Direction verified against the user's YY controls: this field is
             // 1 when the mic is enabled and 0 when disabled, despite the getter's name.
             s.NativeMicFlag=b[0];
