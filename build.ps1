@@ -13,7 +13,7 @@ if ($LASTEXITCODE -ne 0) { throw '编译失败。' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'assets\开麦.wav'),(Join-Path $PSScriptRoot 'assets\关麦.wav') -Destination $output -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $output '使用说明.txt') -Force
 if ($Package) {
-    $zip = Join-Path $PSScriptRoot 'dist\YY-Voice-Assistant-v0.1.3-win-x64.zip'
+    $zip = Join-Path $PSScriptRoot 'dist\YY-Voice-Assistant-v0.1.4-win-x64.zip'
     # Use an explicit allowlist so building after a local run cannot publish settings or logs.
     $files = @('YY语音助手.exe','开麦.wav','关麦.wav','使用说明.txt') | ForEach-Object { Join-Path $output $_ }
     Compress-Archive -LiteralPath $files -DestinationPath $zip -Force
