@@ -1,6 +1,6 @@
 # YY Voice Assistant
 
-Windows 桌面端 YY 语音助手，当前打包版本为 **0.1.4 本机验证版**。
+Windows 桌面端 YY 语音助手，当前打包版本为 **0.1.5 本机验证版**。
 
 ## 功能
 
@@ -43,7 +43,7 @@ Windows 桌面端 YY 语音助手，当前打包版本为 **0.1.4 本机验证�
 .\build.ps1 -Package
 ```
 
-第一条会编译到 `dist/YY语音助手/`，第二条额外生成 `dist/YY-Voice-Assistant-v0.1.4-win-x64.zip` 和 SHA256 校验文件。
+第一条会编译到 `dist/YY语音助手/`，第二条额外生成 `dist/YY-Voice-Assistant-v0.1.5-win-x64.zip` 和 SHA256 校验文件。
 不需要安装 Visual Studio；构建脚本使用系统 .NET Framework 编译器。
 `-Package` 包含运行程序、合成默认音效及此说明，不收集本机设置或日志。
 
@@ -57,7 +57,7 @@ Windows 桌面端 YY 语音助手，当前打包版本为 **0.1.4 本机验证�
 
 此目录可作为 Git 仓库根目录；`dist`、运行配置、日志和自定义音频已列入 `.gitignore`。
 上传到自己的仓库后，可创建一个 Release 并附加程序 ZIP 和校验文件。
-项目仓库：https://github.com/darlingqin1/yy-voice-assistant
+项目仓库：https://gitee.com/darlingqin/yy-voice-assistant
 
 尚未指定开源许可证。
 
@@ -66,16 +66,21 @@ Windows 桌面端 YY 语音助手，当前打包版本为 **0.1.4 本机验证�
 
 设置最下方有“检查更新”按钮和“有新版本时自动下载并更新”开关。默认开启，启动 15 秒后检查，之后每 6 小时检查一次。关闭自动更新后仍可手动点击“检查更新”并安装新版。
 
-更新源固定为本仓库的最新正式 Release，不安装草稿或预发布版本。通过 GitHub HTTPS 下载并验证 SHA256、ZIP 文件清单、程序标识和版本，校验不通过时保留当前版本。没有正式 Release 时显示暂未发布。
+更新源固定为本仓库的最新正式 Release，不安装草稿或预发布版本。通过 Gitee HTTPS 下载并验证 SHA256、ZIP 文件清单、程序标识和版本，校验不通过时保留当前版本。没有正式 Release 时显示暂未发布。
 
-更新过程中助手短暂退出并重新启动；设置、原有默认 WAV、自定义音效、随 YY 启动配置都会保留。新版启动失败时尝试恢复上一个程序，保留 `.previous` 备份；结果写入程序目录的 `更新结果.txt`。程序目录需要可写、网络需要可访问 GitHub。
+更新过程中助手短暂退出并重新启动；设置、原有默认 WAV、自定义音效、随 YY 启动配置都会保留。新版启动失败时尝试恢复上一个程序，保留 `.previous` 备份；结果写入程序目录的 `更新结果.txt`。程序目录需要可写、网络需要可访问 Gitee。
 
 更新助手只替换 `YY语音助手.exe`，缺少默认 WAV 时补充。发布包中的新说明见对应 Release 或仓库 README。
 
-维护者发布新版时，递增 `src/YYAssistant.cs` 的两个程序集版本号和 `build.ps1` 中 ZIP 版本号。创建如 `v0.1.4` 的正式 Release，附加 `YY-Voice-Assistant-v0.1.4-win-x64.zip` 及同名 `.zip.sha256` 文件，名称必须匹配。勾选预发布的版本不会自动安装。
+维护者发布新版时，递增 `src/YYAssistant.cs` 的两个程序集版本号和 `build.ps1` 中 ZIP 版本号。创建如 `v0.1.5` 的正式 Release，附加 `YY-Voice-Assistant-v0.1.5-win-x64.zip` 及同名 `.zip.sha256` 文件，名称必须匹配。勾选预发布的版本不会自动安装。
 
 更新逻辑自检（隔离临时目录，不退出正在运行的助手）：
 
 ```powershell
 .\dist\YY语音助手\YY语音助手.exe --update-self-test "$PWD\dist\update-self-test.txt"
 ```
+
+
+### v0.1.5 更新源迁移
+
+本版起从 Gitee 最新正式发行版查询和下载更新。旧版可通过 GitHub 上的 v0.1.5 迁移包更新一次，之后使用 Gitee。Gitee 发行版需要同时上传对应 ZIP 和 .zip.sha256，附件名称必须匹配，包内程序版本必须与标签一致。
