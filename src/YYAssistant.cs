@@ -19,8 +19,8 @@ using System.Windows.Automation;
 using Forms = System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("YY Voice Assistant")]
-[assembly: System.Reflection.AssemblyVersion("0.1.4.0")]
-[assembly: System.Reflection.AssemblyFileVersion("0.1.4.0")]
+[assembly: System.Reflection.AssemblyVersion("0.1.5.0")]
+[assembly: System.Reflection.AssemblyFileVersion("0.1.5.0")]
 
 // Read compatible YY layouts regardless of version or file hash. Query/read only;
 // validate loaded modules, object identities and data bounds before using state.

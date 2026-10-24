@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -21,6 +21,7 @@ internal sealed class ReleaseAsset
 }
 internal sealed class AppRelease
 {
+    public long id { get; set; }
     public string tag_name { get; set; }
     public bool draft { get; set; }
     public bool prerelease { get; set; }
@@ -34,8 +35,8 @@ internal sealed class UpdatePlan
 
 internal sealed class Updates : IDisposable
 {
-    public const string Repository="darlingqin1/yy-voice-assistant";
-    public const string ReleasePage="https://github.com/"+Repository+"/releases";
+    public const string Repository="darlingqin/yy-voice-assistant";
+    public const string ReleasePage="https://gitee.com/"+Repository+"/releases";
     public static readonly Version Current=Assembly.GetExecutingAssembly().GetName().Version;
     public static string VersionLabel { get { return Current.ToString(3); } }
     private readonly Preferences prefs;
@@ -68,9 +69,7 @@ internal sealed class Updates : IDisposable
             status="正在检查更新…";
             var token=cancellation.Token;
             var release=await Task.Run(delegate {
-                string api="https://api.github.com/repos/"+Repository+"/releases/latest";
-                string body=Encoding.UTF8.GetString(Download(api,1024*1024,token,null));
-                return new JavaScriptSerializer().Deserialize<AppRelease>(body);
+                return LoadRelease(token);
             },token);
             Version version;
             if(release==null || release.draft || release.prerelease || !TryVersion(release.tag_name,out version))
@@ -119,13 +118,36 @@ internal sealed class Updates : IDisposable
         if(!Version.TryParse(text.TrimStart('v'),out parsed)) return false;
         result=new Version(parsed.Major,parsed.Minor,parsed.Build,Math.Max(0,parsed.Revision)); return true;
     }
+    private static AppRelease LoadRelease(CancellationToken token)
+    {
+        string api="https://gitee.com/api/v5/repos/"+Repository+"/releases/";
+        string body=Encoding.UTF8.GetString(Download(api+"latest",1024*1024,token,null));
+        var release=new JavaScriptSerializer().Deserialize<AppRelease>(body);
+        Version version;
+        if(release==null || release.id<=0 || release.draft || release.prerelease || !TryVersion(release.tag_name,out version))
+            throw new InvalidDataException("发布版本信息不完整。");
+        // Gitee latest-release assets omit size; retrieve and cross-check attachment metadata.
+        string attachments=Encoding.UTF8.GetString(Download(api+release.id+"/attach_files?per_page=100",1024*1024,token,null));
+        return MergeAttachments(release,attachments);
+    }
+    internal static AppRelease MergeAttachments(AppRelease release,string body)
+    {
+        var attachments=new JavaScriptSerializer().Deserialize<ReleaseAsset[]>(body);
+        if(attachments==null || attachments.Length>=100) throw new InvalidDataException("发行版附件信息不完整。");
+        foreach(var asset in attachments) {
+            if(asset==null || asset.size<=0 || (release.assets ?? new ReleaseAsset[0]).Count(a=>a!=null && a.name==asset.name && a.browser_download_url==asset.browser_download_url)!=1)
+                throw new InvalidDataException("发行版附件信息不一致。");
+        }
+        release.assets=attachments;
+        return release;
+    }
     private static ReleaseAsset FindAsset(AppRelease release,string name)
     {
         var matches=(release.assets ?? new ReleaseAsset[0]).Where(a=>a.name==name).ToArray();
         if(matches.Length!=1) throw new InvalidDataException("新版本缺少更新包或 SHA256 校验文件。");
         Uri uri;
-        if(!Uri.TryCreate(matches[0].browser_download_url,UriKind.Absolute,out uri) || uri.Scheme!="https" || uri.Host!="github.com" ||
-            !uri.AbsolutePath.StartsWith("/"+Repository+"/releases/download/",StringComparison.Ordinal))
+        if(!Uri.TryCreate(matches[0].browser_download_url,UriKind.Absolute,out uri) || uri.Scheme!="https" || uri.Host!="gitee.com" ||
+            !uri.AbsolutePath.StartsWith("/"+Repository+"/releases/download/"+release.tag_name+"/",StringComparison.Ordinal) || !String.IsNullOrEmpty(uri.Query) || !String.IsNullOrEmpty(uri.Fragment) || !String.IsNullOrEmpty(uri.UserInfo) || !uri.IsDefaultPort)
             throw new InvalidDataException("更新文件来源不正确。");
         return matches[0];
     }
@@ -134,11 +156,11 @@ internal sealed class Updates : IDisposable
         ServicePointManager.SecurityProtocol|=SecurityProtocolType.Tls12;
         var request=(HttpWebRequest)WebRequest.Create(url);
         request.UserAgent="YY-Voice-Assistant/"+VersionLabel;
-        request.Accept="application/vnd.github+json";
+        request.Accept="application/json, application/octet-stream";
         request.Timeout=20000; request.ReadWriteTimeout=20000;
         using(token.Register(request.Abort))
         using(var response=(HttpWebResponse)request.GetResponse()) {
-            if(response.ResponseUri.Scheme!="https" || !(response.ResponseUri.Host=="github.com" || response.ResponseUri.Host=="api.github.com" || response.ResponseUri.Host.EndsWith(".githubusercontent.com",StringComparison.OrdinalIgnoreCase)))
+            if(response.ResponseUri.Scheme!="https" || !(response.ResponseUri.Host=="gitee.com" || (response.ResponseUri.Host=="foruda.gitee.com" && response.ResponseUri.AbsolutePath.StartsWith("/attach_file/",StringComparison.Ordinal))))
                 throw new InvalidDataException("更新下载被重定向到未知来源。");
             if(response.ContentLength>limit) throw new InvalidDataException("更新数据过大。");
             using(var stream=response.GetResponseStream())
@@ -263,7 +285,7 @@ internal sealed class Updates : IDisposable
     internal static string ProbeRelease()
     {
         var token=CancellationToken.None;
-        var release=new JavaScriptSerializer().Deserialize<AppRelease>(Encoding.UTF8.GetString(Download("https://api.github.com/repos/"+Repository+"/releases/latest",1024*1024,token,null)));
+        var release=LoadRelease(token);
         Version version;
         if(release==null || release.draft || release.prerelease || !TryVersion(release.tag_name,out version)) throw new InvalidDataException("发布版本错误。");
         string name="YY-Voice-Assistant-v"+version.ToString(3)+"-win-x64.zip";
@@ -273,7 +295,7 @@ internal sealed class Updates : IDisposable
         if(package.LongLength!=asset.size) throw new InvalidDataException("文件大小错误。");
         string fixture=Path.Combine(Path.GetTempPath(),"YY-release-probe-"+Guid.NewGuid().ToString("N"));
         ValidateAndExtract(package,hash,version,fixture);
-        return "PASS: GitHub latest stable release, assets, SHA256, download, executable version; no installation performed. Version="+version+"; Fixtures="+fixture;
+        return "PASS: Gitee latest stable release, assets, SHA256, download, executable version; no installation performed. Version="+version+"; Fixtures="+fixture;
     }
 
     internal static string SelfTest()
@@ -292,6 +314,18 @@ internal sealed class Updates : IDisposable
         rejected=false;
         try { FindAsset(new AppRelease { assets=new[]{new ReleaseAsset {name="test.zip",browser_download_url="https://example.com/test.zip"}} },"test.zip"); } catch(InvalidDataException) { rejected=true; }
         check(rejected,"foreign download source rejected");
+        string sampleUrl="https://gitee.com/"+Repository+"/releases/download/v0.1.5/test.zip";
+        var sample=new AppRelease {tag_name="v0.1.5",assets=new[]{new ReleaseAsset {name="test.zip",browser_download_url=sampleUrl}}};
+        string json=new JavaScriptSerializer().Serialize(new[]{new ReleaseAsset {name="test.zip",browser_download_url=sampleUrl,size=123}});
+        check(FindAsset(MergeAttachments(sample,json),"test.zip").size==123,"Gitee attachment sizes merged with release metadata");
+        rejected=false;
+        try { MergeAttachments(new AppRelease {assets=new ReleaseAsset[0]},json); } catch(InvalidDataException) { rejected=true; }
+        check(rejected,"unlisted Gitee attachment rejected");
+        foreach(string bad in new[]{sampleUrl.Replace("v0.1.5/","v0.1.4/"),sampleUrl+"?redirect=foreign",sampleUrl.Replace("gitee.com/","gitee.com.evil.example/")}) {
+            rejected=false;
+            try { FindAsset(new AppRelease {tag_name="v0.1.5",assets=new[]{new ReleaseAsset {name="test.zip",browser_download_url=bad}}},"test.zip"); } catch(InvalidDataException) { rejected=true; }
+            check(rejected,"wrong release or untrusted Gitee URL rejected");
+        }
         string fixture=Path.Combine(Path.GetTempPath(),"YY-update-test-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(fixture);
         string stage=Path.Combine(fixture,"stage"),target=Path.Combine(fixture,"target");
